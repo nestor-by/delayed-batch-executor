@@ -66,9 +66,29 @@
         </dependency>
 
         <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
-            <version>1.1.7</version>
+            <artifactId>tinylog-api</artifactId>
+            <groupId>org.tinylog</groupId>
+            <version>2.2.0</version>
+        </dependency>
+        <dependency>
+            <artifactId>tinylog-impl</artifactId>
+            <groupId>org.tinylog</groupId>
+            <version>2.2.0</version>
+        </dependency>
+        <dependency>
+            <artifactId>slf4j-tinylog</artifactId>
+            <groupId>org.tinylog</groupId>
+            <version>2.2.0</version>
+        </dependency>
+        <dependency>
+            <artifactId>jcl-tinylog</artifactId>
+            <groupId>org.tinylog</groupId>
+            <version>2.2.0</version>
+        </dependency>
+        <dependency>
+            <artifactId>log4j1.2-api</artifactId>
+            <groupId>org.tinylog</groupId>
+            <version>2.2.0</version>
         </dependency>
     </dependencies>
 

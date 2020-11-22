@@ -1,66 +1,40 @@
 package com.github.victormpcmun.delayedbatchexecutor;
 
-import java.util.Arrays;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
-abstract class Tuple<T>  {
-    protected T result;
-    protected final Object[] argsAsArray;
-    protected RuntimeException runtimeException;
-    private int hashCode;
+class Tuple<A, T> {
 
-    Tuple(Object... argsAsArray) {
-        super();
-        this.result = null;
-        this.argsAsArray = argsAsArray;
-        this.hashCode=Arrays.hashCode(argsAsArray);
+  private final A arg;
+  private final CompletableFuture<T> result;
 
+  Tuple(A arg) {
+    this.arg = arg;
+    this.result = new CompletableFuture<>();
+  }
+
+  public A getArg() {
+    return arg;
+  }
+
+  public CompletableFuture<T> getResult() {
+    return result;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
     }
-
-    void copyResultAndRuntimeExceptionFromTuple(Tuple<T> tuple) {
-        this.result=tuple.getResult();
-        this.runtimeException=tuple.getRuntimeException();
+    if (o == null || getClass() != o.getClass()) {
+      return false;
     }
+    Tuple<?, ?> tuple = (Tuple<?, ?>) o;
+    return Objects.equals(arg, tuple.arg);
+  }
 
-
-    public void setResult(T result) {
-        this.result = result;
-    }
-
-    public void setRuntimeException(RuntimeException runtimeException) {
-        this.runtimeException = runtimeException;
-    }
-
-    int getArgsSize() {
-        return argsAsArray.length;
-    }
-
-    Object getArgumentByPosition(int argPosition) {
-        return argsAsArray[argPosition];
-    }
-
-    public T getResult() {
-        return result;
-    }
-
-    abstract void continueIfIsWaiting();
-
-    RuntimeException getRuntimeException() {
-        return runtimeException;
-    }
-
-    boolean hasRuntimeException() {
-        return runtimeException!=null;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        // o will never null
-        Tuple<?> tuple = (Tuple<?>) o;
-        return Arrays.equals(argsAsArray, tuple.argsAsArray);
-    }
-
-    @Override
-    public int hashCode() {
-        return Arrays.hashCode(argsAsArray);
-    }
+  @Override
+  public int hashCode() {
+    return arg.hashCode();
+  }
 }

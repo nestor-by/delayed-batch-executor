@@ -1,288 +1,141 @@
 package com.github.victormpcmun.delayedbatchexecutor;
 
-import reactor.core.publisher.UnicastProcessor;
+import static java.util.stream.Collectors.toList;
 
+import com.github.victormpcmun.delayedbatchexecutor.callback.BatchAsyncCallback;
 import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.Collections;
+import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.UnicastProcessor;
+import reactor.core.scheduler.Schedulers;
 
-abstract class DelayedBatchExecutor {
+public class DelayedBatchExecutor<A, Z> {
 
-    private static final String TO_STRING_FORMAT="DelayedBatchExecutor {invocationsCounter=%d, callBackExecutionsCounter=%d, duration=%d, size=%d, bufferQueueSize=%d}";
+  public static final int MIN_TIME_WINDOW_TIME_IN_MILLISECONDS = 1;
+  public static final int MAX_TIME_WINDOW_TIME_IN_MILLISECONDS = 60 * 60 * 1000;
+  public static final int DEFAULT_FIXED_THREAD_POOL_COUNTER = 4;
+  public static final int DEFAULT_BUFFER_QUEUE_SIZE = 8192;
+  private static final Logger log = LoggerFactory.getLogger(DelayedBatchExecutor.class);
+  private final BatchAsyncCallback<Z, A> batchCallBack;
+  private final Duration duration;
+  private final int maxSize;
+  private final ExecutorService executorService;
+  private final int bufferQueueSize;
+  private final UnicastProcessor<Tuple<A, Z>> source;
 
-    /**
-     * {@value com.github.victormpcmun.delayedbatchexecutor.DelayedBatchExecutor#MIN_TIME_WINDOW_TIME_IN_MILLISECONDS}
-     */
-    public static final int MIN_TIME_WINDOW_TIME_IN_MILLISECONDS=1;
+  public DelayedBatchExecutor(Duration duration, int maxSize, ExecutorService executorService, int bufferQueueSize,
+      BatchAsyncCallback<Z, A> batchCallBack) {
+    validateConfigParameters(duration, maxSize, bufferQueueSize);
+    this.maxSize = maxSize;
+    this.duration = duration;
+    this.executorService = executorService;
+    this.bufferQueueSize = bufferQueueSize;
+    this.source = createProcessor(duration, maxSize, bufferQueueSize);
+    this.batchCallBack = batchCallBack;
+  }
 
-    /**
-     * {@value com.github.victormpcmun.delayedbatchexecutor.DelayedBatchExecutor#MAX_TIME_WINDOW_TIME_IN_MILLISECONDS}
-     */
-    public static final int MAX_TIME_WINDOW_TIME_IN_MILLISECONDS=60*60*1000;
+  public static <Z, A> DelayedBatchExecutor<A, Z> create(
+      Duration duration,
+      int size,
+      BatchAsyncCallback<Z, A> callBack) {
+    final ExecutorService executorService = Executors.newFixedThreadPool(DEFAULT_FIXED_THREAD_POOL_COUNTER);
+    return new DelayedBatchExecutor<>(duration, size, executorService, DEFAULT_BUFFER_QUEUE_SIZE, callBack);
+  }
 
-    /**
-     * {@value com.github.victormpcmun.delayedbatchexecutor.DelayedBatchExecutor#DEFAULT_FIXED_THREAD_POOL_COUNTER}
-     */
-    public static final int DEFAULT_FIXED_THREAD_POOL_COUNTER = 4;
+  public static <Z, A> DelayedBatchExecutor<A, Z> create(
+      Duration duration,
+      int size,
+      ExecutorService executorService,
+      int bufferQueueSize,
+      BatchAsyncCallback<Z, A> batchCallback) {
+    return new DelayedBatchExecutor<>(duration, size, executorService, bufferQueueSize, batchCallback);
+  }
 
-
-    /**
-     * {@value com.github.victormpcmun.delayedbatchexecutor.DelayedBatchExecutor#DEFAULT_BUFFER_QUEUE_SIZE}
-     */
-    public static final int DEFAULT_BUFFER_QUEUE_SIZE = 8192;
-
-    private final AtomicLong invocationsCounter;
-    private final AtomicLong callBackExecutionsCounter;
-
-    private Duration duration;
-    private int maxSize;
-    private ExecutorService executorService;
-    private int bufferQueueSize;
-	private UnicastProcessor<Tuple> source;
-	private boolean removeDuplicates;
-
-    protected DelayedBatchExecutor(Duration duration, int maxSize, ExecutorService executorService, int bufferQueueSize, boolean removeDuplicates) {
-        super();
-        boolean configurationSuccessful = updateConfig(duration, maxSize, executorService, bufferQueueSize, removeDuplicates);
-        if (!configurationSuccessful) {
-            throw new RuntimeException("Illegal configuration parameters");
-        }
-        this.invocationsCounter = new AtomicLong(0);
-        this.callBackExecutionsCounter = new AtomicLong(0);
-        this.removeDuplicates=removeDuplicates;
+  private void validateConfigParameters(Duration duration, int maxSize, int bufferQueueSize) {
+    boolean sizeValidation = maxSize >= 1;
+    boolean durationValidation = duration != null
+        && duration.toMillis() >= MIN_TIME_WINDOW_TIME_IN_MILLISECONDS
+        && duration.toMillis() <= MAX_TIME_WINDOW_TIME_IN_MILLISECONDS;
+    boolean bufferQueueSizeValidation = (bufferQueueSize >= 1);
+    if (!sizeValidation || !durationValidation || !bufferQueueSizeValidation) {
+      throw new RuntimeException("Illegal configuration parameters");
     }
+  }
 
-    /**
-     * Update the Duration and maxSize params of this Delayed Batch Executor, keeping the current existing value for executorService,  bufferQueueSize and removeDuplicates
-     * <br>
-     * <br>
-     * This method is thread safe
-     * <br>
-     * @param  duration  the new {@link Duration} for this Delayed Batch Executor
-     * @param  maxSize  the new maxsize  for this Delayed Batch Executor
-     * @return  true if the configuration was successful updated, false otherwise
-     *
-     */
-    public boolean updateConfig(Duration duration, int maxSize) {
-        return updateConfig(duration, maxSize, executorService, bufferQueueSize, removeDuplicates);
+  private UnicastProcessor<Tuple<A, Z>> createProcessor(Duration duration, int maxSize, int bufferQueueSize) {
+    // => https://github.com/reactor/reactor-core/issues/469#issuecomment-286040390
+    Queue<Tuple<A, Z>> blockingQueue = new ArrayBlockingQueue<>(bufferQueueSize);
+    UnicastProcessor<Tuple<A, Z>> newSource = UnicastProcessor.create(blockingQueue);
+    newSource.publish()
+        .autoConnect()
+        .bufferTimeout(maxSize, duration)
+        .subscribe(this::invokeBatchCallbackAndContinue);
+    return newSource;
+  }
+
+  private void invokeBatchCallbackAndContinue(List<Tuple<A, Z>> tuples) {
+    final List<A> args = tuples.stream().map(Tuple::getArg).collect(toList());
+    batchCallBack.apply(args)
+        .doOnError(e -> log.error("invokeBatchCallbackAndContinue: " + e.getMessage(), e))
+        .defaultIfEmpty(Collections.emptyMap())
+        .subscribeOn(Schedulers.fromExecutorService(executorService))
+        .subscribe(rawResultList -> {
+          for (Tuple<A, Z> tuple : tuples) {
+            tuple.getResult().complete(rawResultList.get(tuple.getArg()));
+          }
+        }, e -> {
+          for (Tuple<A, Z> tuple : tuples) {
+            tuple.getResult().completeExceptionally(e);
+          }
+        });
+  }
+
+  public Z execute(A arg1) {
+    return execute(arg1, 5, TimeUnit.SECONDS);
+  }
+
+  public Z execute(A arg1, long timeout, TimeUnit unit) {
+    final CompletableFuture<Z> result = enlistTuple(arg1);
+    try {
+      return result.get(timeout, unit);
+    } catch (ExecutionException e) {
+      throw (RuntimeException) e.getCause();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new RuntimeException("Interrupted waiting. it shouldn't happen ever", e);
+    } catch (TimeoutException e) {
+      throw new RuntimeException(e);
     }
+  }
 
-    /**
-     * Update the Duration, maxsize, ExecutorService, bufferQueueSize and removeDuplicates params of this Delayed Batch Executor
-     * <br>
-     * <br>
-     * This method is thread safe
-     * <br>
-     * @param  duration  the new {@link Duration} for this Delayed Batch Executor
-     * @param  maxSize  the new maxsize  for this Delayed Batch Executor
-     * @param  executorService the new {@link ExecutorService} for this Delayed Batch Executor
-     * @param  bufferQueueSize max size of the internal queue to buffer values
-     * @param  removeDuplicates if true then duplicated arguments from execute*(...) methods are not passed to the batchCallBack (considering same {@link Object#hashCode()} and  being {@link Object#equals(Object)})
-     * @return  true if the configuration was successful updated, false otherwise
-     *
-     */
-    public synchronized boolean updateConfig(Duration duration, int maxSize,  ExecutorService executorService, int bufferQueueSize, boolean removeDuplicates) {
-        boolean validateConfig = validateConfigurationParameters(duration, maxSize, executorService, bufferQueueSize);
-        if (validateConfig) {
-            boolean parameterAreEqualToCurrentOnes = parameterAreEqualToCurrentOnes(duration,  maxSize, executorService, bufferQueueSize);
-            if (!parameterAreEqualToCurrentOnes) {
-                this.maxSize =maxSize;
-                this.duration=duration;
-                this.executorService=executorService;
-                this.bufferQueueSize=bufferQueueSize;
-                this.source = createBufferedTimeoutUnicastProcessor(duration, maxSize, bufferQueueSize, removeDuplicates);
+  public CompletableFuture<Z> executeAsFuture(A arg1) {
+    return enlistTuple(arg1);
+  }
 
-            }
-        }
-        return validateConfig;
-    }
+  public Mono<Z> executeAsMono(A arg1) {
+    return Mono.fromFuture(() -> enlistTuple(arg1));
+  }
 
-    /**
-     * The count of invocations of all of the execute methods of this Delayed Batch Executor: execute(...), executeAsFuture(...) or executeAsMono(...) since the creation of this Delayed Batch Executor
-     * @return  the count of invocations of all blocking, Future and Mono invocations since the creation of this Delayed Batch Executor
-     *
-     */
-    public Long getInvocationsCounter() {
-        return invocationsCounter.get();
-    }
+  private CompletableFuture<Z> enlistTuple(A arg) {
+    final Tuple<A, Z> param = new Tuple<>(arg);
+    source.onNext(param);
+    return param.getResult();
+  }
 
-    /**
-     * The count of executions of the batchCallBack method since the creation of this Delayed Batch Executor
-     * @return  the count of executions of the batchCallBack method since the creation of this Delayed Batch Executor
-     *
-     */
-    public Long getCallBackExecutionsCounter() {
-        return callBackExecutionsCounter.get();
-    }
-
-    /**
-     * The current {@link Duration} of this Delayed Batch Executor
-     * @return  the current {@link Duration} of this Delayed Batch Executor
-     *
-     */
-    public Duration getDuration() {
-        return duration;
-    }
-
-    /**
-     * The current size of this Delayed Batch Executor
-     * @return  the current size of this Delayed Batch Executor
-     *
-     */
-    public Integer getMaxSize() {
-        return maxSize;
-    }
-
-
-    /**
-     * The current max size of the internal queue to buffer values
-     * @return  the current max size of the internal queue to buffer values
-     *
-     */
-    public Integer getBufferQueueSize() {
-        return bufferQueueSize;
-    }
-
-    /**
-     * The current ExecutorService
-     * @return  the current ExecutorService
-     *
-     */
-    public ExecutorService getExecutorService() {
-        return executorService;
-    }
-
-    /**
-     * The removeDuplicates behaviour flag
-     * @return  the removeDuplicates behaviour flag
-     *
-     */
-
-    public boolean isRemoveDuplicates() {
-        return removeDuplicates;
-    }
-
-    /**
-     *  static method that creates the default Executor Service, which is a  {@link java.util.concurrent.Executors#newFixedThreadPool(int)}
-     *  with the following number of threads given by constant {@link #DEFAULT_FIXED_THREAD_POOL_COUNTER}
-     * @return the default Executor Service
-     */
-
-    public static ExecutorService getDefaultExecutorService() {
-        return getDefaultExecutorService(DEFAULT_FIXED_THREAD_POOL_COUNTER);
-    }
-
-
-    /**
-     *  static method that creates the default Executor Service, which is a  {@link java.util.concurrent.Executors#newFixedThreadPool(int)}
-     *  with the  given number of threads
-     * @param threads number of threads of the FixedThreadPool
-     * @return the default Executor Service
-     */
-
-    public static ExecutorService getDefaultExecutorService(int threads) {
-        return Executors.newFixedThreadPool(threads);
-    }
-
-    @Override
-    public String toString() {
-        return String.format(TO_STRING_FORMAT, invocationsCounter.get(), callBackExecutionsCounter.get(),  duration.toMillis(), maxSize, bufferQueueSize);
-    }
-
-    protected <Z> void enlistTuple(Tuple<Z> param) {
-        invocationsCounter.incrementAndGet();
-        source.onNext(param);
-    }
-
-    protected abstract List<Object> getResultListFromBatchCallBack(List<List<Object>>  transposedTupleList);
-
-    private void invokeBatchCallBackAndContinue(List<Tuple> tupleList) {
-        List<Object> rawResultList=null;
-        List<Object> resultFromCallBack;
-        RuntimeException runtimeException=null;
-        try {
-            List<List<Object>> transposedTupleList = TupleListTransposer.transposeValuesAsListOfList(tupleList);
-            rawResultList = getResultListFromBatchCallBack(transposedTupleList);
-        } catch (RuntimeException re) {
-            runtimeException=re;
-        }  finally {
-            resultFromCallBack = resizeListFillingWithNullsIfNecessary(rawResultList, tupleList.size());
-        }
-
-        for (int indexTuple=0; indexTuple<tupleList.size(); indexTuple++) {
-            Tuple tuple = tupleList.get(indexTuple);
-            tuple.setResult(resultFromCallBack.get(indexTuple));
-            tuple.setRuntimeException(runtimeException);
-            tuple.continueIfIsWaiting();
-        }
-    }
-
-    private void assignValuesToDuplicatesAndContinue(TupleListDuplicatedFinder tupleListDuplicatedFinder) {
-        Map<Integer,Integer> duplicatedMapIndex = tupleListDuplicatedFinder.getDuplicatedMapIndex();
-        List<Tuple> allTupleList = tupleListDuplicatedFinder.getAllTupleList();
-        for (Integer duplicatedIndex: duplicatedMapIndex.keySet()) {
-            Tuple duplicatedTuple = allTupleList.get(duplicatedIndex);
-            Tuple uniqueTuple = allTupleList.get(duplicatedMapIndex.get(duplicatedIndex));
-            duplicatedTuple.copyResultAndRuntimeExceptionFromTuple(uniqueTuple);
-            duplicatedTuple.continueIfIsWaiting();
-        }
-    }
-
-    private void executeBatchCallBackRemovingDuplicates(List<Tuple> tupleList) {
-        callBackExecutionsCounter.incrementAndGet();
-        CompletableFuture.runAsync(() -> {
-                TupleListDuplicatedFinder tupleListDuplicatedFinder = new TupleListDuplicatedFinder(tupleList);
-                List<Tuple> tupleListUnique = tupleListDuplicatedFinder.getTupleListUnique();
-                invokeBatchCallBackAndContinue(tupleListUnique);
-                assignValuesToDuplicatesAndContinue(tupleListDuplicatedFinder);
-         }, this.executorService);
-    }
-
-    private void executeBatchCallBackNotRemovingDuplicates(List<Tuple> tupleList) {
-        callBackExecutionsCounter.incrementAndGet();
-        CompletableFuture.runAsync(() -> {
-            invokeBatchCallBackAndContinue(tupleList);
-        }, this.executorService);
-    }
-
-
-    private  UnicastProcessor<Tuple> createBufferedTimeoutUnicastProcessor(Duration duration, int maxSize, int bufferQueueSize, boolean removeDuplicates) {
-        Queue<Tuple> blockingQueue =  new ArrayBlockingQueue<>(bufferQueueSize) ; // => https://github.com/reactor/reactor-core/issues/469#issuecomment-286040390
-        UnicastProcessor<Tuple> newSource=UnicastProcessor.create(blockingQueue);
-        if (removeDuplicates) {
-            newSource.publish().autoConnect().bufferTimeout(maxSize, duration).subscribe(this::executeBatchCallBackRemovingDuplicates);
-        } else {
-            newSource.publish().autoConnect().bufferTimeout(maxSize, duration).subscribe(this::executeBatchCallBackNotRemovingDuplicates);
-        }
-        return newSource;
-    }
-
-    private boolean validateConfigurationParameters(Duration duration, int maxSize, ExecutorService executorService, int bufferQueueSize) {
-        boolean sizeValidation = (maxSize >= 1);
-        boolean durationValidation = duration!=null && duration.toMillis()>=MIN_TIME_WINDOW_TIME_IN_MILLISECONDS && duration.toMillis()<=MAX_TIME_WINDOW_TIME_IN_MILLISECONDS;
-        boolean executorServiceValidation = (executorService!=null);
-        boolean bufferQueueSizeValidation = (bufferQueueSize>=1);
-        return sizeValidation && durationValidation && executorServiceValidation && bufferQueueSizeValidation;
-    }
-
-    private boolean parameterAreEqualToCurrentOnes(Duration duration, int size, ExecutorService executorService, int bufferQueueSize) {
-        boolean sameDuration = this.duration != null && this.duration.compareTo(duration) == 0;
-        boolean sameSize = (this.maxSize == size);
-        boolean sameExecutorService = this.executorService != null && this.executorService == executorService; // same reference is enough
-        boolean sameBufferQueueSize = (this.bufferQueueSize==bufferQueueSize);
-        return sameDuration && sameSize && sameExecutorService && sameBufferQueueSize;
-    }
-
-
-
-    private List<Object> resizeListFillingWithNullsIfNecessary(List<Object> list, int desiredSize) {
-        if (list==null) {
-            list= Collections.nCopies(desiredSize,  null);
-        } else if (list.size()<desiredSize) {
-            list = new ArrayList(list); // make it mutable in case it isn't
-            list.addAll(Collections.nCopies(desiredSize-list.size(),null));
-        }
-        return list;
-    }
+  @Override
+  public String toString() {
+    return "DelayedBatchExecutor "
+        + "{duration=" + duration.toMillis() + ", size=" + maxSize + ", bufferQueueSize=" + bufferQueueSize + "}";
+  }
 }
