@@ -54,106 +54,8 @@ A DelayedBatchExecutor is defined by three parameters:
     - The returned list must have a correspondence in elements with the parameters list, this means that the value of position 0 of the returned list must be the one corresponding to parameter in position 0 of the param list and so on...
     - By default, duplicated parameters (by [hashCode](https://docs.oracle.com/javase/8/docs/api/java/lang/Object.html#hashCode--) and [equals](https://docs.oracle.com/javase/8/docs/api/java/lang/Object.html#equals-java.lang.Object-)) are removed from the parameters list automatically. This is optimal in most cases although there is a way for having all parameters (including duplicates) if it is required (See Advanced Usage)
 	
-  Now, Let's define a DelayedBatchExecutor to receive an Integer value as parameter and return a String, and having a time window = 50 milliseconds, a max size = 100 elements and having the batchCallback defined as method reference: 
-  
-  ```java
-DelayedBatchExecutor2<String,Integer> dbe = DelayedBatchExecutor2.create(Duration.ofMillis(50), 100, this::myBatchCallBack);
-  
-...
-  
-List<String> myBatchCallBack(List<Integer> listOfIntegers) {
-	List<String>  resultList = ...// execute query:SELECT * FROM TABKE WHERE ID IN (listOfIntegers.get(0), ..., listOfIntegers.get(n));
-                                // use your favourite API: JDBC, JPA, Hibernate,...
-  	...
-  	return resultList;
-}
-```
 
-The same DelayedBatchExecutor2 but having the callback defined as lambda expression would be:
-
-```java
-DelayedBatchExecutor2<String,Integer> dbe = DelayedBatchExecutor2.create(Duration.ofMillis(50), 100, listOfIntegers-> 
-{
-  List<String>  resultList = ...// execute query:SELECT * FROM TABLE WHERE ID IN (listOfIntegers.get(0), ..., listOfIntegers.get(n));
-                                // use your favourite API: JDBC, JPA, Hibernate,...
-  ...
-  return resultList;
-  
- });
-  ``` 
-NOTE: the instance `dbe` must be accesible from the code being executed by the threads (it is often declared as instance variable of a singleton DAO).
-Once defined the DelayedBatchExecutor instance, it is easy to use it from the code executed in each thread
-
-  ```java
-// this code is executed in one of the multiple threads
-int param=...;
-String result = dbe.execute(param); // all the threads executing this code within a interval of 50 ms will have 
-			            // their parameters (an integer value) collected in a list (list of integers) 
-				    // that will be passed to the callback method, and from the list returned from this
-				    // method, each thread will receive its corresponding value
-				    // all this managed behind the scenes by the DelayedBatchExecutor
-}
-```
-NOTE:
-- To create a DelayedBatchExecutor for taking more than one argument see FootNote 1
-- In the example above, the thread is stopped when the execute(...) method is executed until the result is available (blocking behaviour). This is one of the three execution policies of the DelayedBatchExecutor
-
-
-### Execution Policies
-
-There are three policies to use a DelayedBatchExecutor from the code being executed from the threads
-
-#### Blocking
-
-The thread is blocked until the result is available, it is implemented by using the method `execute(...)`
- 
-```java 
-    int param = ...
-	...
-    String result = dbe.execute(param); // this thread will be blocked until the result is available
-    // compute with result
-```
-The following diagram depicts how blocking policy works:
-
-![Blocking image](/src/main/javadoc/doc-files/blocking.svg)
-
-
-#### Non-blocking (java.util.concurrent.Future)
-
-The thread is not blocked, it is implemented by using the method `executeAsFuture(...)`
-
-```java 
-    int param = ...
-       ...	
-    Future<String> resultFuture = dbe.executeAsFuture(param); // the thread will not  be blocked
-    // compute something else
-    String result = resultFuture.get();  // Blocks the thread until the result is available (if necessary)
-    // compute with result
-```
-
-The following diagram depicts how Future policy works:
-
-![Future image](/src/main/javadoc/doc-files/future.svg)
-
-
-#### Non-blocking (Reactive using Reactor framework):
- 
- The thread is not blocked, it is implemented by using the method `executeAsMono(...)`
- 
-```java 
-    int param =...
-       ...
-    reactor.core.publisher.Mono<String> resultMono = dbe.executeAsMono(param); // the thread will not  be blocked
-    // compute something else
-    resultMono.subscribe(stringResult -> {
-         // compute with stringResult
-      });
-```
-The following diagram depicts how Reactive policy works:
-
-![Reactive image](/src/main/javadoc/doc-files/mono.svg)
-
-### Advanced Usage
+### Usage
 
 There are three parameters of a DelayedBatchExecutor that must be known to get the most of it:
 
@@ -170,31 +72,42 @@ These parameters can be set by using the following constructor:
 int maxSize=20;
 ExecutorService executorService= Executors.newFixedThreadPool(10);
 int bufferQueueSize= 16384;
-boolean removeDuplicates = false;
   
-DelayedBatchExecutor2<Integer,String> dbe = DelayedBatchExecutor2.create(
+DelayedBatchExecutor<Integer,String> dbe = DelayedBatchExecutor.create(
     Duration.ofMillis(200), 
     maxSize,
     executorService,
     bufferQueueSize,
-    removeDuplicates,
     this::myBatchCallBack);
 ```
- At any time, the configuration paramaters can be updated by using this thread safe method
- 
+#### Non-blocking
+
 ```java
-...
-dbe.updateConfig(
-    Duration.ofMillis(200), 
-    maxSize,
-    executorService,
-    bufferQueueSize,
-    removeDuplicates,
-    this::myBatchCallBack);
- ```
+DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor.create(
+    DBE_DURATION, 
+    DBE_MAX_SIZE, 
+    params -> Mono.just(Collections.emptyMap()));
+```
+#### Blocking
 
------
--Foot Note 1:  The example shows a DelayedBatchExecutor for a parameter of type Integer and a return type of String, hence DelayedBatchExecutor2<String,Integer>
+```java
+DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor.create(
+    DBE_DURATION, 
+    DBE_MAX_SIZE, 
+    BatchCallbacks.block(params -> {
+      Map<Integer, String> result = params.stream()
+          .collect(Collectors.toMap(x -> x, value -> PREFIX + value));
+      return result;
+    }));
+```
+#### Consume
 
-For a DelayedBatchExecutor for two parameters (say Integer and Date) and a returning type String, the definition would be:
-DelayedBatchExecutor3<String,Integer,Date> and so on...
+```java
+... 
+DelayedBatchExecutor<Integer, Void> dbe = DelayedBatchExecutor.create(
+    DBE_DURATION, 
+    DBE_MAX_SIZE, 
+    BatchCallbacks.consumer(params -> {
+      log.info("received: {}", params);
+    }));
+```

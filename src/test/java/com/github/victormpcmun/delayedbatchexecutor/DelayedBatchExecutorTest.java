@@ -69,14 +69,14 @@ public class DelayedBatchExecutorTest {
 
   @Test
   public void blockingTest() {
-    DelayedBatchExecutor<Integer, String> dbe2 = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, this::delayedBatchExecutorCallbackWithSimulatedDelay);
     Callable<Void> callable = () -> {
       Integer randomInteger = getRandomIntegerFromInterval(1, 1000);
       log.info("blockingTest=>Before invoking execute with arg {}", randomInteger);
       String expectedValue =
           PREFIX + randomInteger; // the expected String returned by delayedBatchExecutorCallback for a given integer
-      String result = dbe2.execute(randomInteger); // it will block until the result is available
+      String result = dbe.execute(randomInteger); // it will block until the result is available
       log.info("blockingTest=>After invoking execute. Expected returned Value {}. Actual returned value {}",
           expectedValue, result);
       Assert.assertEquals(result, expectedValue);
@@ -88,14 +88,14 @@ public class DelayedBatchExecutorTest {
 
   @Test
   public void futureTest() {
-    DelayedBatchExecutor<Integer, String> dbe2 = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, this::delayedBatchExecutorCallbackWithSimulatedDelay);
     Callable<Void> callable = () -> {
       Integer randomInteger = getRandomIntegerFromInterval(1, 1000);
       log.info("futureTest=>Before invoking execute with arg {}", randomInteger);
       String expectedValue =
           PREFIX + randomInteger; // the expected String returned by delayedBatchExecutorCallback for a given integer
-      Future<String> future = dbe2.executeAsFuture(randomInteger); // it will NOT block until the result is available
+      Future<String> future = dbe.executeAsFuture(randomInteger); // it will NOT block until the result is available
       log.info("futureTest=>Doing some computation after invoking executeAsFuture");
       String result;
       try {
@@ -114,7 +114,7 @@ public class DelayedBatchExecutorTest {
 
   @Test
   public void monoTest() {
-    DelayedBatchExecutor<Integer, String> dbe2 = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, this::delayedBatchExecutorCallbackWithSimulatedDelay);
     AtomicInteger atomicIntegerCounter = new AtomicInteger(0);
     Callable<Void> callable = () -> {
@@ -122,7 +122,7 @@ public class DelayedBatchExecutorTest {
       log.info("monoTest=>Before invoking execute with arg {}", randomInteger);
       String expectedValue =
           PREFIX + randomInteger; // the expected String returned by delayedBatchExecutorCallback for a given integer
-      Mono<String> mono = dbe2.executeAsMono(randomInteger); // it will NOT block the thread
+      Mono<String> mono = dbe.executeAsMono(randomInteger); // it will NOT block the thread
       log.info("monoTest=>Continue with computation after invoking the executeAsMono");
       mono.subscribe(result -> {
         log.info("monoTest=>Inside Mono. Expected  Value {}. Actual returned value {}", expectedValue, result);
@@ -141,11 +141,11 @@ public class DelayedBatchExecutorTest {
 
   @Test(expected = NullPointerException.class)
   public void blockingExceptionTest() {
-    DelayedBatchExecutor<Integer, String> dbe2LaunchingException = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbeLaunchingException = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, integerList -> Mono.error(new NullPointerException()));
     Callable<Void> callable = () -> {
       try {
-        String result = dbe2LaunchingException.execute(1);
+        String result = dbeLaunchingException.execute(1);
       } catch (NullPointerException e) {
         log.info("blockingExceptionTest=>It is capturing successfully the exception");
         throw e;  // for the purpose of this test, the exception will be rethrown in method waitUntilFinishing
@@ -159,10 +159,10 @@ public class DelayedBatchExecutorTest {
   @Test
   public void monoExceptionTest() {
     AtomicInteger atomicIntegerCounter = new AtomicInteger(0);
-    DelayedBatchExecutor<Integer, String> dbe2LaunchingException = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbeLaunchingException = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, integerList -> Mono.error(new NullPointerException()));
     Callable<Void> callable = () -> {
-      Mono<String> mono = dbe2LaunchingException.executeAsMono(1); // it will NOT block the thread
+      Mono<String> mono = dbeLaunchingException.executeAsMono(1); // it will NOT block the thread
       mono.doOnError(NullPointerException.class, e ->
       {
         log.info("monoExceptionTest=>Successfully processed the exception");
@@ -179,10 +179,10 @@ public class DelayedBatchExecutorTest {
 
   @Test(expected = NullPointerException.class)
   public void futureExceptionTest() {
-    DelayedBatchExecutor<Integer, String> dbe2LaunchingException = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbeLaunchingException = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, integerList -> Mono.error(new NullPointerException()));
     Callable<Void> callable = () -> {
-      Future<String> future = dbe2LaunchingException
+      Future<String> future = dbeLaunchingException
           .executeAsFuture(1); // it will NOT block until the result is available
       String result = null;
       try {
@@ -204,10 +204,10 @@ public class DelayedBatchExecutorTest {
 
   @Test(expected = NullPointerException.class)
   public void changeConfigTest() {
-    DelayedBatchExecutor<Integer, String> dbe2LaunchingException = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbeLaunchingException = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, integerList -> Mono.error(new NullPointerException()));
     Callable<Void> callable = () -> {
-      Future<String> future = dbe2LaunchingException
+      Future<String> future = dbeLaunchingException
           .executeAsFuture(1); // it will NOT block until the result is available
       try {
         future.get(); // will launch exception
@@ -228,9 +228,9 @@ public class DelayedBatchExecutorTest {
 
   @Test(expected = TimeoutException.class)
   public void futureTimeOutTest() throws InterruptedException, ExecutionException, TimeoutException {
-    DelayedBatchExecutor<Integer, String> dbe2 = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor
         .create(Duration.ofMillis(2000), 2, resultList -> Mono.just(Collections.emptyMap()));
-    Future<String> futureResult1 = dbe2.executeAsFuture(1);
+    Future<String> futureResult1 = dbe.executeAsFuture(1);
     futureResult1.get(1500, TimeUnit.MILLISECONDS);
   }
 
@@ -241,7 +241,7 @@ public class DelayedBatchExecutorTest {
     Duration duration = Duration.ofSeconds(2);
     int maxSize = 30000;
     final ExecutorService executorService = Executors.newFixedThreadPool(fixedThreadPoolSize);
-    DelayedBatchExecutor<Integer, String> dbe2 = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor
         .create(duration, maxSize, executorService, bufferQueueSize, block(integerList -> {
           Map<Integer, String> stringListSimulatedResult = integerList.stream()
               .collect(Collectors.toMap(x -> x, value -> PREFIX + value));
@@ -255,10 +255,10 @@ public class DelayedBatchExecutorTest {
         Integer randomInteger = getRandomIntegerFromInterval(1, 1000);
         String expectedValue =
             PREFIX + randomInteger; // the expected String returned by delayedBatchExecutorCallback for a given integer
-        String result = dbe2.execute(randomInteger); // it will block until the result is available
+        String result = dbe.execute(randomInteger); // it will block until the result is available
         Assert.assertEquals(result, expectedValue);
-        //dbe2.updateConfig(dbe2.getDuration(), dbe2.getMaxSize(), dbe2.getExecutorService(), dbe2.getBufferQueueSize()+1);
-        log.info("DelayedBatchExecutor:{}", dbe2);
+        //dbe.updateConfig(dbe.getDuration(), dbe.getMaxSize(), dbe.getExecutorService(), dbe.getBufferQueueSize()+1);
+        log.info("DelayedBatchExecutor:{}", dbe);
       }
       return null;
     };
@@ -268,13 +268,13 @@ public class DelayedBatchExecutorTest {
 
   @Test
   public void nullInResponseTest() {
-    DelayedBatchExecutor<Integer, String> dbe2 = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, listOfIntegers -> {
           return Mono.empty();
         });
     Callable<Void> callable = () -> {
       Integer randomInteger = getRandomIntegerFromInterval(1, 1000);
-      String result = dbe2.execute(randomInteger); // it will block until the result is available
+      String result = dbe.execute(randomInteger); // it will block until the result is available
       Assert.assertNull(result);
       return null;
     };
@@ -284,12 +284,12 @@ public class DelayedBatchExecutorTest {
 
   @Test
   public void nullInSomePositionsInResultTest() {
-    DelayedBatchExecutor<Integer, String> dbe2 = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, String> dbe = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, block(integerList -> integerList.stream()
             .collect(HashMap::new, (m, v) -> m.put(v, v % 2 == 0 ? null : PREFIX + v), HashMap::putAll)));
     Callable<Void> callable = () -> {
       Integer randomInteger = getRandomIntegerFromInterval(1, 3);
-      String result = dbe2.execute(randomInteger); // it will block until the result is available
+      String result = dbe.execute(randomInteger); // it will block until the result is available
       if (randomInteger == 2) {
         Assert.assertNull(result);
       } else {
@@ -303,13 +303,13 @@ public class DelayedBatchExecutorTest {
 
   @Test
   public void voidTest() {
-    DelayedBatchExecutor<Integer, Void> dbe2 = DelayedBatchExecutor
+    DelayedBatchExecutor<Integer, Void> dbe = DelayedBatchExecutor
         .create(DBE_DURATION, DBE_MAX_SIZE, consumer(listOfIntegers -> {
           log.info("received: {}", listOfIntegers);
         }));
     Callable<Void> callable = () -> {
       Integer randomInteger = getRandomIntegerFromInterval(1, 100);
-      Future<Void> result = dbe2.executeAsFuture(randomInteger);
+      Future<Void> result = dbe.executeAsFuture(randomInteger);
 
       sleepCurrentThread(500);
       return null;
