@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.github.victormpcmun</groupId>
@@ -8,7 +9,9 @@
     <packaging>jar</packaging>
 
     <name>${project.groupId}:${project.artifactId}</name>
-    <description>A component to decrease the number of required queries by batching them in Java multi-threaded applications</description>
+    <description>A component to decrease the number of required queries by batching them in Java multi-threaded
+        applications
+    </description>
     <url>https://github.com/victormpcmun/delayed-batch-executor</url>
 
     <licenses>
@@ -46,7 +49,6 @@
     </distributionManagement>
 
     <properties>
-        <reactor-core.version>3.2.11.RELEASE</reactor-core.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     </properties>
@@ -55,45 +57,69 @@
         <dependency>
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-core</artifactId>
-            <version>${reactor-core.version}</version>
+            <version>3.7.12</version>
         </dependency>
 
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
-            <version>4.12</version>
+            <version>4.13.2</version>
             <scope>test</scope>
         </dependency>
 
         <dependency>
             <artifactId>tinylog-api</artifactId>
             <groupId>org.tinylog</groupId>
-            <version>2.2.0</version>
+            <version>2.7.0</version>
         </dependency>
         <dependency>
             <artifactId>tinylog-impl</artifactId>
             <groupId>org.tinylog</groupId>
-            <version>2.2.0</version>
+            <version>2.7.0</version>
         </dependency>
         <dependency>
             <artifactId>slf4j-tinylog</artifactId>
             <groupId>org.tinylog</groupId>
-            <version>2.2.0</version>
+            <version>2.7.0</version>
         </dependency>
         <dependency>
             <artifactId>jcl-tinylog</artifactId>
             <groupId>org.tinylog</groupId>
-            <version>2.2.0</version>
+            <version>2.7.0</version>
         </dependency>
         <dependency>
             <artifactId>log4j1.2-api</artifactId>
             <groupId>org.tinylog</groupId>
-            <version>2.2.0</version>
+            <version>2.7.0</version>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>versions-maven-plugin</artifactId>
+                <version>2.19.1</version>
+                <configuration>
+                    <ruleSet>
+                        <ignoreVersions>
+                            <!-- игнорируем снапшоты, RC/M, alpha/beta -->
+                            <ignoreVersion>
+                                <type>regex</type>
+                                <version>(?i).+-SNAPSHOT</version>
+                            </ignoreVersion>
+                            <ignoreVersion>
+                                <type>regex</type>
+                                <version>(?i).+[.\-](RC|M)[.\-]?\d+.*</version>
+                            </ignoreVersion>
+                            <ignoreVersion>
+                                <type>regex</type>
+                                <version>(?i).+-(alpha|beta).+</version>
+                            </ignoreVersion>
+                        </ignoreVersions>
+                    </ruleSet>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
